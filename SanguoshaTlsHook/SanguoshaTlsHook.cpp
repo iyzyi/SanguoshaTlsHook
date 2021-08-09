@@ -167,8 +167,8 @@ BOOL RemoteInject(DWORD dwPid, PCHAR szDllPath) {
 
 int main()
 {
-	//WCHAR ProcessName[] = L"SGSOL.exe";
-	WCHAR ProcessName[] = L"notepad.exe";
+	WCHAR ProcessName[] = L"SGSOL.exe";
+	//WCHAR ProcessName[] = L"notepad.exe";
 	DWORD ProcessIdList[PROCESS_ID_LIST_NUMBER];
 	DWORD dwProcessIdNumbers = GetProcessIDByName(ProcessName, ProcessIdList);
 	printf("共%d个进程\n", dwProcessIdNumbers);

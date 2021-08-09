@@ -5,6 +5,3 @@
 
 #include "winuser.h "
 
-void test() {
-	MessageBoxA(0, "Hello", "Hello", 0);
-}

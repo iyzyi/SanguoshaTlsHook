@@ -2,6 +2,12 @@
 #include "stdafx.h"
 
 
+VOID HOOK();
+VOID UNHOOK();
+
+BOOL Hooked = FALSE;
+
+
 BOOL APIENTRY DllMain( HMODULE hModule,
                        DWORD  ul_reason_for_call,
                        LPVOID lpReserved
@@ -10,12 +16,27 @@ BOOL APIENTRY DllMain( HMODULE hModule,
 	switch (ul_reason_for_call)
 	{
 	case DLL_PROCESS_ATTACH:
-		MessageBoxA(NULL, "123456789", NULL, NULL);
+		HOOK();
 		break;
 	case DLL_THREAD_ATTACH:
 	case DLL_THREAD_DETACH:
 	case DLL_PROCESS_DETACH:
+		//UNHOOK();
 		break;
 	}
 	return TRUE;
+}
+
+
+
+VOID HOOK() {
+	if (!Hooked) {
+		MessageBoxA(0, "×°ÔØHOOK", "HOOK", 0);
+		Hooked = TRUE;
+	}
+}
+
+
+VOID UNHOOK() {
+	MessageBoxA(0, "Ð¶ÔØHOOK", "UNHOOK", 0);
 }
