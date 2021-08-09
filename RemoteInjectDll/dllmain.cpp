@@ -2,12 +2,15 @@
 #include "stdafx.h"
 
 #include<stdlib.h>
+#include "DataLog.h"
 
+#pragma warning(disable : 4996)
 
 VOID HOOK();
 VOID UNHOOK();
 
 BOOL Hooked = FALSE;
+CDataLog* m_pDataLog;
 
 
 //定义如下结构，保存一次InlineHook所需要的信息
@@ -27,7 +30,7 @@ HOOK_DATA RecvHookData, SendHookData;
 
 //等效于HOOK前的recv和send的函数的指针
 //typedef int (WINAPI *PFN_Recv)(SOCKET s, char *buf, int len, int flags);
-typedef int (WINAPI *PFN_Send)(DWORD *ssl, const void *buf, int num);
+typedef int (WINAPI *PFN_Send)(long long int *ssl, const void *buf, int num);
 
 //等效于HOOK前的recv和send的函数的指针
 //PFN_Recv OriginalRecv = NULL;
@@ -38,7 +41,7 @@ PFN_Send OriginalSend = NULL;
 
 //声明
 //int WINAPI My_Recv(SOCKET s, char *buf, int len, int flags);
-int WINAPI My_Send(DWORD *ssl, const void *buf, int num);
+int WINAPI My_Send(long long int *ssl, const void *buf, int num);
 //BOOL Inline_InstallHook_Recv();
 BOOL Inline_InstallHook_Send();
 LPVOID GetAddress(char *, char *);
@@ -46,7 +49,6 @@ void InitHookEntry(PHOOK_DATA pHookData);
 VOID InitTrampoline(PHOOK_DATA pHookData);
 BOOL InstallCodeHook(PHOOK_DATA pHookData);
 
-VOID MsgPrint(PBYTE Buffer);
 
 
 
@@ -76,14 +78,16 @@ VOID HOOK() {
 		return;
 	}
 
-	MessageBoxA(0, "装载HOOK", "HOOK", 0);
+	m_pDataLog = new CDataLog("d:\\桌面\\sanguosha.log");
+
+	//MessageBoxA(0, "装载HOOK", "HOOK", 0);
 	Inline_InstallHook_Send();
 	Hooked = TRUE;
 }
 
 
 VOID UNHOOK() {
-	MessageBoxA(0, "卸载HOOK", "UNHOOK", 0);
+	//MessageBoxA(0, "卸载HOOK", "UNHOOK", 0);
 }
 
 
@@ -104,7 +108,7 @@ VOID UNHOOK() {
 //	return ret;
 //}
 
-int WINAPI My_Send(DWORD *ssl, const void *buf, int num)
+int WINAPI My_Send(long long int *ssl, const void *buf, int num)
 {
 	/*int ret = OriginalSend(s, buf, len, flags);
 	if (ret > 0) {
@@ -113,7 +117,9 @@ int WINAPI My_Send(DWORD *ssl, const void *buf, int num)
 	}
 	}
 	return ret;*/
-	MessageBoxA(NULL, "succ", "", NULL);
+	//MessageBoxA(NULL, "send", "", NULL);
+
+	m_pDataLog->LogString("call My_Send\n");
 
 	return OriginalSend(ssl, buf, num);
 }
@@ -142,9 +148,8 @@ BOOL Inline_InstallHook_Send()
 	SendHookData.HookCodeLen = 13;
 	SendHookData.HookPoint = (ULONG_PTR)GetAddress(SendHookData.szModuleName, SendHookData.szApiName);//HOOK的地址
 
-
-	MsgPrint((PBYTE)SendHookData.HookPoint);
-
+	sprintf((PCHAR)m_pDataLog->bBuffer, "HookPoint = 0x%llx\n", SendHookData.HookPoint);
+	m_pDataLog->LogString((PCHAR)m_pDataLog->bBuffer);
 
 	SendHookData.pfnTrampolineFun = (ULONG_PTR)VirtualAlloc(NULL, 128, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
 	SendHookData.pfnDetourFun = (ULONG_PTR)My_Send;//自定义hook函数
@@ -167,14 +172,18 @@ LPVOID GetAddress(char* szModuleName, char *szFuncName)
 	HMODULE hModule = 0;
 	if (hModule = GetModuleHandleA(szModuleName))
 	{
-		//char temp[32];
-		//_itoa_s(((long int)hModule) + dwOffset, temp, 32);
-		//MessageBoxA(NULL, temp, "", NULL);
-		return (LPVOID)(hModule + dwOffset);
+		sprintf((PCHAR)m_pDataLog->bBuffer, "BaseAddr = 0x%llx\n", (long long int)hModule);
+		m_pDataLog->LogString((PCHAR)m_pDataLog->bBuffer);
+
+		sprintf((PCHAR)m_pDataLog->bBuffer, "Offset = 0x%llx\n", (long long int)dwOffset);
+		m_pDataLog->LogString((PCHAR)m_pDataLog->bBuffer);
+		//MessageBoxA(NULL, (PCHAR)m_pDataLog->bBuffer, "", 0);
+
+		return (LPVOID)((long long int)hModule + (long long int)dwOffset);
 	}
 	else
 	{
-		MessageBoxA(NULL, "GetModuleHandleA失败", "", NULL);
+		m_pDataLog->LogString("GetModuleHandleA失败");
 	}
 }
 
@@ -247,32 +256,3 @@ BOOL InstallCodeHook(PHOOK_DATA pHookData)
 	}
 	return bResult;
 }
-
-
-
-
-
-
-//VOID MsgPrint(PBYTE Buffer) {
-//	MessageBoxA(NULL, "asd", "", NULL);
-//	CHAR Str[66] = { 0 };
-//
-//	CHAR Table[] = "0123456789abcdef";
-//	for (DWORD i = 0; i < 32; i++) {
-//		/*if (((BYTE)(Buffer[i] >> 4)) > 15 || ((Buffer[i]) & 0xf) > 15) {
-//			MessageBoxA(NULL, "no", "", NULL);
-//		}*/
-//		MessageBoxA(NULL, (PCHAR)Table[(Buffer[i] >> 4) & 0xf], "", NULL);
-//		MessageBoxA(NULL, (PCHAR)Table[(Buffer[i]) & 0xf], "", NULL);
-//		Str[2 * i] = Table[(Buffer[i] >> 4) & 0xf];
-//		Str[2 * i + 1] = Table[(Buffer[i]) & 0xf];
-//	}
-//	Str[64] = '\0';
-//	
-//	MessageBoxA(NULL, Str, "DEBUG", NULL);
-//}
-
-
-//VOID MsgNum(DWORD) {
-//
-//}
