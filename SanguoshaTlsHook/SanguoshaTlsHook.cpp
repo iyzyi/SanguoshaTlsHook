@@ -2,18 +2,14 @@
 //
 
 #include "stdafx.h"
-
 #include "stdlib.h"
 #include "windows.h"
-
 #include <Tlhelp32.h>
 #include <Shlwapi.h>  
 #pragma comment(lib, "shlwapi.lib")
-
-#include "iostream"
 #include "atlconv.h"
-
 #include <assert.h>
+
 
 #define PROCESS_ID_LIST_NUMBER 24
 
@@ -42,71 +38,148 @@ DWORD GetProcessIDByName(PWCHAR pwszName, PDWORD ProcessIdList)
 }
 
 
+HMODULE GetHModuleIDByName(DWORD dwPid, PWCHAR pwszName)
+{
+	DWORD dwProcessIdNumbers = 0;
+	HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, dwPid);
+	if (INVALID_HANDLE_VALUE == hSnapshot) {
+		return NULL;
+	}
+	MODULEENTRY32 me;
+	me.dwSize = sizeof(me);
+	for (BOOL ret = Module32First(hSnapshot, &me); ret; ret = Module32Next(hSnapshot, &me))
+	{
+		if (wcscmp(me.szModule, pwszName) == 0)
+		{
+			CloseHandle(hSnapshot);
+			return me.hModule;
+		}
+		//USES_CONVERSION;
+		//printf("%p\t%s\n", me.hModule, W2A(me.szModule));
+	}
+	CloseHandle(hSnapshot);
+	return NULL;
+}
 
-int RemoteInject(DWORD dwPid) {
-	HANDLE	hThread;
-	HANDLE	hProcess;								//远程进程句柄;
-	CHAR	szLibPath[] = "D:\\桌面\\SanguoshaTlsHook\\x64\\Debug\\RemoteInjectDll.dll";		// "你的dll"的文件名包含全路径;
-	void*   pLibRemote;								// szLibPath 将要复制到地址
-	DWORD   hLibModule;								//已加载的DLL的基地址（HMODULE）;
-	HMODULE hKernel32;
-	CHAR	szLoadLibrary[] = "LoadLibraryA";
+
+HMODULE GetModuleBaseAddress(DWORD dwPID, PWCHAR pwszName) {
+	HANDLE hSnapShot;
+	hSnapShot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, dwPID);
+	if (hSnapShot == INVALID_HANDLE_VALUE)
+	{
+		return NULL;
+	}
+	MODULEENTRY32 ModuleEntry32;
+	ModuleEntry32.dwSize = sizeof(ModuleEntry32);
+	if (Module32First(hSnapShot, &ModuleEntry32))
+	{
+		do
+		{
+			//printf("0x%x\t%s\n", ModuleEntry32.modBaseAddr, PathFindFileName(ModuleEntry32.szExePath));
+			LPTSTR ModuleName = PathFindFileName(ModuleEntry32.szExePath);
+			if (wcscmp(ModuleName, pwszName) == 0) {
+				CloseHandle(hSnapShot);
+				return (HMODULE)ModuleEntry32.modBaseAddr;
+			}
+		} while (Module32Next(hSnapShot, &ModuleEntry32));
+	}
+	CloseHandle(hSnapShot);
+	return NULL;
+}
 
 
+BOOL RemoteInject(DWORD dwPid, PCHAR szDllPath) {
+	HANDLE	hThread;								// 远程线程，线程函数为LoadLibrary
+	HANDLE	hProcess;								// 远程进程句柄;
+	void*   pDllPathRemote;							// szDllPath拷贝到远程进程的空间中
+	DWORD hDllRemoteBaseAddr;						// 远程注入的DLL在远程进程中的基地址（HMODULE）;
+	//HMODULE	hDllLocalBasesAddr;
+	HMODULE hKernel32;								// Kernel32.dll的基址
+	CHAR	szLoadLibrary[] = "LoadLibraryA";		// A还是W，取决于szDllPath是PCHAR还是PWCHAR
+	HMODULE hModule;								// 注入到远程进程中的DLL的HModule
+
+	// 打开句柄
 	hProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, dwPid);
+	if (hProcess == NULL) {
+		printf("打开句柄失败\n");
+		return FALSE;
+	}
 
-	//分配内存;
-	pLibRemote = ::VirtualAllocEx(hProcess, NULL, sizeof(szLibPath), MEM_COMMIT, PAGE_READWRITE);
-	//printf("%d\t\t%x\n", hProcess, pLibRemote);
+	// 分配内存
+	pDllPathRemote = VirtualAllocEx(hProcess, NULL, sizeof(szDllPath), MEM_COMMIT, PAGE_READWRITE);
 
-	//写进分配的内存中;
-	::WriteProcessMemory(hProcess, pLibRemote, (void*)szLibPath, sizeof(szLibPath), NULL);
+	// DLL路径写进分配的内存中
+	WriteProcessMemory(hProcess, pDllPathRemote, (void*)szDllPath, strlen(szDllPath)+1, NULL);
 
-	hKernel32 = ::GetModuleHandleA("Kernel32");
+	hKernel32 = GetModuleHandleA("Kernel32");
 	FARPROC pLoadLibraryAddress = GetProcAddress(hKernel32, szLoadLibrary);
-	//printf("%x\n", pLoadLibraryAddress);
 
-	// 加载 DLL.dll 到远程进程中
-	hThread = ::CreateRemoteThread(hProcess, NULL, 0, (LPTHREAD_START_ROUTINE)pLoadLibraryAddress, pLibRemote, 0, NULL);
-	//if (hThread == NULL) {
-	//	printf("3");
-	//}
-	//等待返回
-	::WaitForSingleObject(hThread, INFINITE);
-	//取得DLL的基地址
-	::GetExitCodeThread(hThread, &hLibModule);
-	//关闭句柄
-	::CloseHandle(hThread);
-	//释放内存
-	::VirtualFreeEx(hProcess, pLibRemote, sizeof(szLibPath), MEM_RELEASE);
+	// 创建远程线程，线程函数为LoadLibrary(pDllPathRemote);
+	hThread = ::CreateRemoteThread(hProcess, NULL, 0, (LPTHREAD_START_ROUTINE)pLoadLibraryAddress, pDllPathRemote, 0, NULL);
+	if (hThread == NULL) {
+		printf("创建远程线程失败\n");
+		return FALSE;
+	}
+
+	// 等待返回
+	WaitForSingleObject(hThread, INFINITE);
+
+	// 取得DLL的基地址
+	GetExitCodeThread(hThread, &hDllRemoteBaseAddr);
+
+	// 关闭句柄
+	CloseHandle(hThread);
+
+	// 释放内存
+	VirtualFreeEx(hProcess, pDllPathRemote, sizeof(szDllPath), MEM_RELEASE);
+
+	// 在远程进程中查找注入的DLL Module，若找不到说明注入失败
+	hModule = GetHModuleIDByName(dwPid, L"RemoteInjectDll.dll");
+	if (hModule == NULL)
+	{
+		printf("DLL注入失败");
+		return FALSE;
+	}
 
 
+	//HMODULE hLocalModule = LoadLibraryA(szDllPath);
+	//DWORD pid = GetCurrentProcessId();
+	//hDllLocalBasesAddr = GetModuleBaseAddress(pid, L"RemoteInjectDll.dll");
+
+	//LPVOID pFuncAddr = GetProcAddress(hLocalModule, "test");
+
+	//DWORD pRemoteFuncAddr = (DWORD)pFuncAddr - (DWORD)hDllLocalBasesAddr + (DWORD)hDllRemoteBaseAddr;
+
+	//printf("%p\n", pRemoteFuncAddr);
 
 
-	//pTest test = (pTest)GetProcAddress(hLibModule, "test");
+	////// 创建远程线程，线程函数为DLL中的函数
+	////hThread = ::CreateRemoteThread(hProcess, NULL, 0, (LPTHREAD_START_ROUTINE)func, param, 0, NULL);
+	////if (hThread == NULL) {
+	////	printf("创建远程线程失败\n");
+	////	return FALSE;
+	////}
 
-	return 0;
+	return TRUE;
 }
 
 
 
 int main()
 {
+	//WCHAR ProcessName[] = L"SGSOL.exe";
+	WCHAR ProcessName[] = L"notepad.exe";
 	DWORD ProcessIdList[PROCESS_ID_LIST_NUMBER];
-	//DWORD dwProcessIdNumbers = GetProcessIDByName(L"SGSOL.exe", ProcessIdList);
-	DWORD dwProcessIdNumbers = GetProcessIDByName(L"notepad.exe", ProcessIdList);
-	printf("%d\n", dwProcessIdNumbers);
+	DWORD dwProcessIdNumbers = GetProcessIDByName(ProcessName, ProcessIdList);
+	printf("共%d个进程\n", dwProcessIdNumbers);
 
 	for (DWORD i = 0; i < dwProcessIdNumbers; i++) {
 		printf("pid=%d\n", ProcessIdList[i]);
-		RemoteInject(ProcessIdList[i]);
-		//InjectDll(ProcessIdList[i], "D:\\桌面\\SanguoshaTlsHook\\x64\\Debug\\RemoteInjectDll.dll");
-		//printf("%d\n", bRet);
+		CHAR szDllPath[] = "D:\\桌面\\SanguoshaTlsHook\\x64\\Debug\\RemoteInjectDll.dll";
+		RemoteInject(ProcessIdList[i], szDllPath);
 	}
 
-
 	system("pause");
-
     return 0;
 }
 
