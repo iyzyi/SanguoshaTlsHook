@@ -16,9 +16,9 @@ VOID UNHOOK();
 BOOL Hooked = FALSE;
 CDataLog* m_pDataLog;
 
-PQWORD pWebSocketSSL = NULL;
+LPVOID pWebSocketSSL = NULL;
 
-VOID SetWebSocketSSL(PQWORD ssl, void *buf, int len) {
+VOID SetWebSocketSSL(LPVOID ssl, void *buf, int len) {
 	if (len > 17) {
 		CHAR PartOfFirstRecvPacket[] = { 0x55, 0x70, 0x67, 0x72, 0x61, 0x64, 0x65, 0x3a, 0x77, 0x65, 0x62, 0x73, 0x6f, 0x63, 0x6b, 0x65, 0x74, 0x00 };		//Upgrade:websocket
 		PCHAR szData = new CHAR[len + 12];
@@ -32,7 +32,7 @@ VOID SetWebSocketSSL(PQWORD ssl, void *buf, int len) {
 	}
 }
 
-BOOL IsWebSocketSSL(PQWORD pCurrentSSL) {
+BOOL IsWebSocketSSL(LPVOID pCurrentSSL) {
 	if (pWebSocketSSL != NULL) {
 		return pWebSocketSSL == pCurrentSSL;
 	}
@@ -56,10 +56,11 @@ HOOK_DATA RecvHookData, SendHookData;
 
 
 //等效于HOOK前的recv和send的函数的指针
-typedef int (WINAPI *PFN_Recv)(PQWORD ssl, void *buf, int num);
-typedef int (WINAPI *PFN_Send)(PQWORD ssl, const void *buf, int num);
-// QWORD* ssl 原为ssl_st* ssl 或 SSL* ssl
+typedef int (WINAPI *PFN_Recv)(LPVOID ssl, void *buf, int num);
+typedef int (WINAPI *PFN_Send)(LPVOID ssl, const void *buf, int num);
+// LPVOID ssl 原为ssl_st* ssl 或 SSL* ssl
 // ssl_st与SSL是typedef关系
+// 我应该用不到这个参数，所以直接转换成LPVOID
 // ssl_st详见 https://docs.huihoo.com/doxygen/openssl/1.0.1c/structssl__st.html
 
 
@@ -72,8 +73,8 @@ PFN_Send OriginalSend = NULL;
 //int SSL_write(SSL *ssl, const void *buf, int num)
 
 //声明
-int WINAPI My_Recv(PQWORD ssl, void *buf, int num);
-int WINAPI My_Send(PQWORD ssl, const void *buf, int num);
+int WINAPI My_Recv(LPVOID ssl, void *buf, int num);
+int WINAPI My_Send(LPVOID ssl, const void *buf, int num);
 BOOL Inline_InstallHook_Recv();
 BOOL Inline_InstallHook_Send();
 LPVOID GetAddress(char *, char *);
@@ -108,7 +109,7 @@ VOID UNHOOK() {
 
 
 
-int WINAPI My_Recv(PQWORD ssl, void *buf, int num)
+int WINAPI My_Recv(LPVOID ssl, void *buf, int num)
 {
 	int ret = OriginalRecv(ssl, buf, num);
 	if (ret > 0) {
@@ -125,7 +126,7 @@ int WINAPI My_Recv(PQWORD ssl, void *buf, int num)
 	return ret;
 }
 
-int WINAPI My_Send(PQWORD ssl, const void *buf, int num)
+int WINAPI My_Send(LPVOID ssl, const void *buf, int num)
 {
 	if (IsWebSocketSSL(ssl)) {
 		m_pDataLog->LogFormatString(64, "[PID:%d\tSSL:0x%llx] Send Data (%d Bytes): \n", GetCurrentProcessId(), ssl, num);
