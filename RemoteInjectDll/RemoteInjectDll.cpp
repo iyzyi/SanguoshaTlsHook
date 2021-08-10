@@ -8,12 +8,36 @@
 #pragma warning(disable : 4996)
 
 #define QWORD unsigned long long int
+#define PQWORD QWORD*
 
 VOID HOOK();
 VOID UNHOOK();
 
 BOOL Hooked = FALSE;
 CDataLog* m_pDataLog;
+
+PQWORD pWebSocketSSL = NULL;
+
+VOID SetWebSocketSSL(PQWORD ssl, void *buf, int len) {
+	if (len > 17) {
+		CHAR PartOfFirstRecvPacket[] = { 0x55, 0x70, 0x67, 0x72, 0x61, 0x64, 0x65, 0x3a, 0x77, 0x65, 0x62, 0x73, 0x6f, 0x63, 0x6b, 0x65, 0x74, 0x00 };		//Upgrade:websocket
+		PCHAR szData = new CHAR[len + 12];
+		memset(szData, 0, len + 12);
+		memcpy(szData, buf, len);			// buf中第num个字节未必是\x00，所以需要拷贝到szData中再调用strstr
+
+		if (strstr(szData, PartOfFirstRecvPacket)) {
+			pWebSocketSSL = ssl;
+			m_pDataLog->LogFormatString(64, "[INFO] Find WebSocket SSL: 0x%llx\n\n", ssl);
+		}
+	}
+}
+
+BOOL IsWebSocketSSL(PQWORD pCurrentSSL) {
+	if (pWebSocketSSL != NULL) {
+		return pWebSocketSSL == pCurrentSSL;
+	}
+	return FALSE;
+}
 
 
 //定义如下结构，保存一次InlineHook所需要的信息
@@ -32,8 +56,12 @@ HOOK_DATA RecvHookData, SendHookData;
 
 
 //等效于HOOK前的recv和send的函数的指针
-typedef int (WINAPI *PFN_Recv)(QWORD *ssl, void *buf, int num);
-typedef int (WINAPI *PFN_Send)(QWORD *ssl, const void *buf, int num);
+typedef int (WINAPI *PFN_Recv)(PQWORD ssl, void *buf, int num);
+typedef int (WINAPI *PFN_Send)(PQWORD ssl, const void *buf, int num);
+// QWORD* ssl 原为ssl_st* ssl 或 SSL* ssl
+// ssl_st与SSL是typedef关系
+// ssl_st详见 https://docs.huihoo.com/doxygen/openssl/1.0.1c/structssl__st.html
+
 
 //等效于HOOK前的recv和send的函数的指针
 PFN_Recv OriginalRecv = NULL;
@@ -44,8 +72,8 @@ PFN_Send OriginalSend = NULL;
 //int SSL_write(SSL *ssl, const void *buf, int num)
 
 //声明
-int WINAPI My_Recv(QWORD *ssl, void *buf, int num);
-int WINAPI My_Send(QWORD *ssl, const void *buf, int num);
+int WINAPI My_Recv(PQWORD ssl, void *buf, int num);
+int WINAPI My_Send(PQWORD ssl, const void *buf, int num);
 BOOL Inline_InstallHook_Recv();
 BOOL Inline_InstallHook_Send();
 LPVOID GetAddress(char *, char *);
@@ -80,45 +108,38 @@ VOID UNHOOK() {
 
 
 
-int WINAPI My_Recv(QWORD *ssl, void *buf, int num)
+int WINAPI My_Recv(PQWORD ssl, void *buf, int num)
 {
-	//int ret = OriginalRecv(s, buf, len, flags);
-	//if (ret > 0) {
-	//	if (RecvCallBack) {
-	//		RecvCallBack(s, buf, ret);
-	//	}
-	//}
-	//return ret;
-
 	int ret = OriginalRecv(ssl, buf, num);
 	if (ret > 0) {
-		m_pDataLog->LogFormatString(64, "Recv Data (%d Bytes): \n", ret);
-		m_pDataLog->LogHexData("", (PBYTE)buf, ret);
-		m_pDataLog->LogString("\n\n");
+		if (pWebSocketSSL == NULL) {
+			SetWebSocketSSL(ssl, buf, ret);
+		}
+
+		if (IsWebSocketSSL(ssl)) {
+			m_pDataLog->LogFormatString(64, "[PID:%d\tSSL:0x%llx] Recv Data (%d Bytes): \n", GetCurrentProcessId(), ssl, ret);
+			m_pDataLog->LogHexData("", (PBYTE)buf, ret);
+			m_pDataLog->LogString("\n\n");
+		}
 	}
 	return ret;
 }
 
-int WINAPI My_Send(QWORD *ssl, const void *buf, int num)
+int WINAPI My_Send(PQWORD ssl, const void *buf, int num)
 {
-	/*int ret = OriginalSend(s, buf, len, flags);
-	if (ret > 0) {
-	if (SendCallBack) {
-	SendCallBack(s, buf, ret);
+	if (IsWebSocketSSL(ssl)) {
+		m_pDataLog->LogFormatString(64, "[PID:%d\tSSL:0x%llx] Send Data (%d Bytes): \n", GetCurrentProcessId(), ssl, num);
+		m_pDataLog->LogHexData("", (PBYTE)buf, num);
+		m_pDataLog->LogString("\n\n");
 	}
-	}
-	return ret;*/
-	//MessageBoxA(NULL, "send", "", NULL);
-
-	m_pDataLog->LogFormatString(64, "Send Data (%d Bytes): \n", num);
-	m_pDataLog->LogHexData("", (PBYTE)buf, num);
-	m_pDataLog->LogString("\n\n");
 
 	return OriginalSend(ssl, buf, num);
 }
 
 BOOL Inline_InstallHook_Recv()
 {
+	m_pDataLog->LogFormatString(64, "[PID:%d FUNC:%s]\n", GetCurrentProcessId(), "SSL_read");
+
 	ZeroMemory(&RecvHookData, sizeof(HOOK_DATA));
 	strcpy_s(RecvHookData.szApiName, "SSL_read");
 	strcpy_s(RecvHookData.szModuleName, "SGSOL.exe");
@@ -127,7 +148,7 @@ BOOL Inline_InstallHook_Recv()
 																									  //MsgBoxHookData.pfnOriginalFun = (PVOID)OriginalMessageBox;//调用原始函数的通道
 																									  //x64下不能内联汇编了，所以申请一块内存用做TrampolineFun的shellcode
 
-	m_pDataLog->LogFormatString(64, "SSL_read HookPoint = 0x%llx\n", RecvHookData.HookPoint);
+	m_pDataLog->LogFormatString(64, "HookPoint:\t0x%llx\n", RecvHookData.HookPoint);
 
 	RecvHookData.pfnTrampolineFun = (ULONG_PTR)VirtualAlloc(NULL, 128, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
 	RecvHookData.pfnDetourFun = (ULONG_PTR)My_Recv;														//自定义hook函数
@@ -140,13 +161,15 @@ BOOL Inline_InstallHook_Recv()
 
 BOOL Inline_InstallHook_Send()
 {
+	m_pDataLog->LogFormatString(64, "[PID:%d FUNC:%s]\n", GetCurrentProcessId(), "SSL_write");
+
 	ZeroMemory(&SendHookData, sizeof(HOOK_DATA));
 	strcpy_s(SendHookData.szApiName, "SSL_write");
 	strcpy_s(SendHookData.szModuleName, "SGSOL.exe");
 	SendHookData.HookCodeLen = 13;
 	SendHookData.HookPoint = (ULONG_PTR)GetAddress(SendHookData.szModuleName, SendHookData.szApiName);	//HOOK的地址
 
-	m_pDataLog->LogFormatString(64, "SSL_write HookPoint = 0x%llx\n", SendHookData.HookPoint);
+	m_pDataLog->LogFormatString(64, "HookPoint:\t0x%llx\n", SendHookData.HookPoint);
 
 	SendHookData.pfnTrampolineFun = (ULONG_PTR)VirtualAlloc(NULL, 128, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
 	SendHookData.pfnDetourFun = (ULONG_PTR)My_Send;														//自定义hook函数
@@ -162,8 +185,6 @@ LPVOID GetAddress(char* szModuleName, char *szFuncName)
 {
 	DWORD dwOffset = 0;
 
-	m_pDataLog->LogFormatString(64, "%s\n", szFuncName);
-
 	if (strcmp(szFuncName, "SSL_write") == 0) {
 		dwOffset = 0x14268EAD0 - 0x140000000;
 	}
@@ -174,8 +195,8 @@ LPVOID GetAddress(char* szModuleName, char *szFuncName)
 	HMODULE hModule = 0;
 	if (hModule = GetModuleHandleA(szModuleName))
 	{
-		m_pDataLog->LogFormatString(64, "%s BaseAddr = 0x%llx\n", szFuncName, (QWORD)hModule);
-		m_pDataLog->LogFormatString(64, "%s Offset = 0x%llx\n", szFuncName, (QWORD)dwOffset);
+		m_pDataLog->LogFormatString(64, "BaseAddr:\t0x%llx\n", (QWORD)hModule);
+		m_pDataLog->LogFormatString(64, "Offset:\t\t0x%llx\n", (QWORD)dwOffset);
 		return (LPVOID)((QWORD)hModule + (QWORD)dwOffset);
 	}
 	else
@@ -313,7 +334,7 @@ BOOL InstallCodeHook(PHOOK_DATA pHookData)
 		if (CheckEntry(pHookData)) {
 			if (WriteProcessMemory(hProcess, OriginalAddr, pHookData->newEntry, pHookData->HookCodeLen, &dwBytesReturned))
 			{
-				m_pDataLog->LogString("成功HOOK！\n");
+				m_pDataLog->LogString("HOOK成功！\n");
 				bResult = TRUE;
 			}
 			else {
