@@ -32,20 +32,21 @@ HOOK_DATA RecvHookData, SendHookData;
 
 
 //等效于HOOK前的recv和send的函数的指针
-//typedef int (WINAPI *PFN_Recv)(SOCKET s, char *buf, int len, int flags);
+typedef int (WINAPI *PFN_Recv)(QWORD *ssl, void *buf, int num);
 typedef int (WINAPI *PFN_Send)(QWORD *ssl, const void *buf, int num);
 
 //等效于HOOK前的recv和send的函数的指针
-//PFN_Recv OriginalRecv = NULL;
+PFN_Recv OriginalRecv = NULL;
 PFN_Send OriginalSend = NULL;
 
 
+//int SSL_read(SSL *ssl, void *buf, int num);
 //int SSL_write(SSL *ssl, const void *buf, int num)
 
 //声明
-//int WINAPI My_Recv(SOCKET s, char *buf, int len, int flags);
+int WINAPI My_Recv(QWORD *ssl, void *buf, int num);
 int WINAPI My_Send(QWORD *ssl, const void *buf, int num);
-//BOOL Inline_InstallHook_Recv();
+BOOL Inline_InstallHook_Recv();
 BOOL Inline_InstallHook_Send();
 LPVOID GetAddress(char *, char *);
 void InitHookEntry(PHOOK_DATA pHookData);
@@ -63,6 +64,7 @@ VOID HOOK() {
 
 	//MessageBoxA(0, "装载HOOK", "HOOK", 0);
 	Inline_InstallHook_Send();
+	Inline_InstallHook_Recv();
 	Hooked = TRUE;
 }
 
@@ -78,16 +80,22 @@ VOID UNHOOK() {
 
 
 
-//int WINAPI My_Recv(SOCKET s, char *buf, int len, int flags)
-//{
-//	int ret = OriginalRecv(s, buf, len, flags);
-//	if (ret > 0) {
-//		if (RecvCallBack) {
-//			RecvCallBack(s, buf, ret);
-//		}
-//	}
-//	return ret;
-//}
+int WINAPI My_Recv(QWORD *ssl, void *buf, int num)
+{
+	//int ret = OriginalRecv(s, buf, len, flags);
+	//if (ret > 0) {
+	//	if (RecvCallBack) {
+	//		RecvCallBack(s, buf, ret);
+	//	}
+	//}
+	//return ret;
+
+	m_pDataLog->LogString("Recv Data:\n");
+	m_pDataLog->LogHexData((PCHAR)m_pDataLog->bBuffer, (PBYTE)buf, num);
+	m_pDataLog->LogString("\n\n");
+
+	return OriginalSend(ssl, buf, num);
+}
 
 int WINAPI My_Send(QWORD *ssl, const void *buf, int num)
 {
@@ -109,21 +117,27 @@ int WINAPI My_Send(QWORD *ssl, const void *buf, int num)
 	return OriginalSend(ssl, buf, num);
 }
 
-//BOOL Inline_InstallHook_Recv()
-//{
-//	ZeroMemory(&RecvHookData, sizeof(HOOK_DATA));
-//	strcpy_s(RecvHookData.szApiName, "recv");
-//	strcpy_s(RecvHookData.szModuleName, "ws2_32.dll");
-//	RecvHookData.HookCodeLen = 15;
-//	RecvHookData.HookPoint = (ULONG_PTR)GetAddress(RecvHookData.szModuleName, RecvHookData.szApiName);//HOOK的地址
-//																									  //MsgBoxHookData.pfnOriginalFun = (PVOID)OriginalMessageBox;//调用原始函数的通道
-//																									  //x64下不能内联汇编了，所以申请一块内存用做TrampolineFun的shellcode
-//	RecvHookData.pfnTrampolineFun = (ULONG_PTR)VirtualAlloc(NULL, 128, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
-//	RecvHookData.pfnDetourFun = (ULONG_PTR)My_Recv;//自定义hook函数
-//	BOOL result = InstallCodeHook(&RecvHookData);
-//	OriginalRecv = (PFN_Recv)RecvHookData.pfnTrampolineFun;			//相当于HOOK前的recv函数
-//	return result;
-//}
+BOOL Inline_InstallHook_Recv()
+{
+	ZeroMemory(&RecvHookData, sizeof(HOOK_DATA));
+	strcpy_s(RecvHookData.szApiName, "SSL_read");
+	strcpy_s(RecvHookData.szModuleName, "SGSOL.exe");
+	RecvHookData.HookCodeLen = 15;
+	RecvHookData.HookPoint = (ULONG_PTR)GetAddress(RecvHookData.szModuleName, RecvHookData.szApiName);//HOOK的地址
+																									  //MsgBoxHookData.pfnOriginalFun = (PVOID)OriginalMessageBox;//调用原始函数的通道
+																									  //x64下不能内联汇编了，所以申请一块内存用做TrampolineFun的shellcode
+
+	sprintf((PCHAR)m_pDataLog->bBuffer, "SSL_read HookPoint = 0x%llx\n", SendHookData.HookPoint);
+	m_pDataLog->LogString((PCHAR)m_pDataLog->bBuffer);
+
+	RecvHookData.pfnTrampolineFun = (ULONG_PTR)VirtualAlloc(NULL, 128, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+	RecvHookData.pfnDetourFun = (ULONG_PTR)My_Recv;//自定义hook函数
+	BOOL result = InstallCodeHook(&RecvHookData);
+	OriginalRecv = (PFN_Recv)RecvHookData.pfnTrampolineFun;			//相当于HOOK前的recv函数
+	
+	m_pDataLog->LogString("\n\n");
+	return result;
+}
 
 BOOL Inline_InstallHook_Send()
 {
@@ -133,7 +147,7 @@ BOOL Inline_InstallHook_Send()
 	SendHookData.HookCodeLen = 13;
 	SendHookData.HookPoint = (ULONG_PTR)GetAddress(SendHookData.szModuleName, SendHookData.szApiName);//HOOK的地址
 
-	sprintf((PCHAR)m_pDataLog->bBuffer, "HookPoint = 0x%llx\n", SendHookData.HookPoint);
+	sprintf((PCHAR)m_pDataLog->bBuffer, "SSL_write HookPoint = 0x%llx\n", SendHookData.HookPoint);
 	m_pDataLog->LogString((PCHAR)m_pDataLog->bBuffer);
 
 	SendHookData.pfnTrampolineFun = (ULONG_PTR)VirtualAlloc(NULL, 128, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
@@ -163,10 +177,10 @@ LPVOID GetAddress(char* szModuleName, char *szFuncName)
 	HMODULE hModule = 0;
 	if (hModule = GetModuleHandleA(szModuleName))
 	{
-		sprintf((PCHAR)m_pDataLog->bBuffer, "BaseAddr = 0x%llx\n", (QWORD)hModule);
+		sprintf((PCHAR)m_pDataLog->bBuffer, "%s BaseAddr = 0x%llx\n", szFuncName, (QWORD)hModule);
 		m_pDataLog->LogString((PCHAR)m_pDataLog->bBuffer);
 
-		sprintf((PCHAR)m_pDataLog->bBuffer, "Offset = 0x%llx\n", (QWORD)dwOffset);
+		sprintf((PCHAR)m_pDataLog->bBuffer, "%s Offset = 0x%llx\n", szFuncName, (QWORD)dwOffset);
 		m_pDataLog->LogString((PCHAR)m_pDataLog->bBuffer);
 		//MessageBoxA(NULL, (PCHAR)m_pDataLog->bBuffer, "", 0);
 
@@ -181,23 +195,35 @@ LPVOID GetAddress(char* szModuleName, char *szFuncName)
 /*
 填充入口点指令
 使用的是mov rax xxxxx; jmp rax，长度12
-为了清除指令碎屑，后面要跟着1个nop
+为了清除指令碎屑，后面要跟着nop
 */
 void InitHookEntry(PHOOK_DATA pHookData)
 {
-	pHookData->newEntry[0] = 0x48;
-	pHookData->newEntry[1] = 0xb8;
-	*(ULONG_PTR*)(pHookData->newEntry + 2) = (ULONG_PTR)pHookData->pfnDetourFun;
-	pHookData->newEntry[10] = 0xff;
-	pHookData->newEntry[11] = 0xe0;
-	pHookData->newEntry[12] = 0x90;
+	if (strcmp(pHookData->szApiName, "SSL_write") == 0) {
+		pHookData->newEntry[0] = 0x48;
+		pHookData->newEntry[1] = 0xb8;
+		*(ULONG_PTR*)(pHookData->newEntry + 2) = (ULONG_PTR)pHookData->pfnDetourFun;
+		pHookData->newEntry[10] = 0xff;
+		pHookData->newEntry[11] = 0xe0;
+		pHookData->newEntry[12] = 0x90;
+	}
+	if (strcmp(pHookData->szApiName, "SSL_read") == 0) {
+		pHookData->newEntry[0] = 0x48;
+		pHookData->newEntry[1] = 0xb8;
+		*(ULONG_PTR*)(pHookData->newEntry + 2) = (ULONG_PTR)pHookData->pfnDetourFun;
+		pHookData->newEntry[10] = 0xff;
+		pHookData->newEntry[11] = 0xe0;
+		pHookData->newEntry[12] = 0x90;
+		pHookData->newEntry[13] = 0x90;
+		pHookData->newEntry[14] = 0x90;
+	}
 }
 
 
 /*
 构造从hook后的函数中回到原有函数的指令
 由原来函数的入口点指令加上一个jmp构成
-原来的入口点指令：
+SSL_write原来的入口点指令：
 .text:000000014268EAD0 41 56                                   push    r14
 .text:000000014268EAD2 56                                      push    rsi
 .text:000000014268EAD3 57                                      push    rdi
@@ -205,18 +231,38 @@ void InitHookEntry(PHOOK_DATA pHookData)
 .text:000000014268EAD5 53                                      push    rbx
 .text:000000014268EAD6 48 83 EC 40                             sub     rsp, 40h
 .text:000000014268EADA 44 89 C6                                mov     esi, r8d
+SSL_read原来的入口点指令：
+.text:000000014268E690 56                                      push    rsi
+.text:000000014268E691 57                                      push    rdi
+.text:000000014268E692 53                                      push    rbx
+.text:000000014268E693 48 83 EC 30                             sub     rsp, 30h
+.text:000000014268E697 48 83 B9 98 00 00 00 00                 cmp     qword ptr [rcx+98h], 0
 */
 VOID InitTrampoline(PHOOK_DATA pHookData)
 {
-	//保存前13字节
-	PBYTE pFun = (PBYTE)pHookData->pfnTrampolineFun;
-	memcpy(pFun, (PVOID)pHookData->HookPoint, 13);
+	if (strcmp(pHookData->szApiName, "SSL_write") == 0) {
+		//保存前13字节
+		PBYTE pFun = (PBYTE)pHookData->pfnTrampolineFun;
+		memcpy(pFun, (PVOID)pHookData->HookPoint, 13);
 
-	//在后面添加一个跳转指令
-	pFun += 13;					//跳过前几条指令
-	pFun[0] = 0xFF;
-	pFun[1] = 0x25;
-	*(ULONG_PTR*)(pFun + 6) = pHookData->JmpBackAddr;
+		//在后面添加一个跳转指令
+		pFun += 13;					//跳过前几条指令
+		pFun[0] = 0xFF;
+		pFun[1] = 0x25;
+		*(ULONG_PTR*)(pFun + 6) = pHookData->JmpBackAddr;
+	}
+	
+	if (strcmp(pHookData->szApiName, "SSL_read") == 0) {
+		//保存前15字节
+		PBYTE pFun = (PBYTE)pHookData->pfnTrampolineFun;
+		memcpy(pFun, (PVOID)pHookData->HookPoint, 15);
+
+		//在后面添加一个跳转指令
+		pFun += 15;					//跳过前几条指令
+		pFun[0] = 0xFF;
+		pFun[1] = 0x25;
+		*(ULONG_PTR*)(pFun + 6) = pHookData->JmpBackAddr;
+	}
 }
 
 
@@ -224,8 +270,9 @@ BOOL CheckEntry(PHOOK_DATA pHookData) {
 	BOOL bResult = FALSE;
 
 	if (strcmp(pHookData->szApiName, "SSL_write") == 0) {
+		m_pDataLog->LogString("原入口点指令：\n");
 		m_pDataLog->LogHexData((PCHAR)m_pDataLog->bBuffer, pHookData->oldEntry, 13);
-
+		m_pDataLog->LogString("原入口点指令：test\n");
 		BYTE Code[13] = { 0x41, 0x56, 0x56, 0x57, 0x55, 0x53, 0x48, 0x83, 0xEC, 0x40,
 			0x44, 0x89, 0xC6 };
 		for (int i = 0; i < 13; i++) {
@@ -236,9 +283,19 @@ BOOL CheckEntry(PHOOK_DATA pHookData) {
 		bResult = TRUE;
 	}
 
-	//if (strcmp(pHookData->szApiName, "SSL_read")) {
-	//	;
-	//}
+	if (strcmp(pHookData->szApiName, "SSL_read") == 0) {
+		m_pDataLog->LogString("原入口点指令：\n");
+		m_pDataLog->LogHexData((PCHAR)m_pDataLog->bBuffer, pHookData->oldEntry, 15);
+
+		BYTE Code[15] = { 0x56, 0x57, 0x53, 0x48, 0x83, 0xEC, 0x30, 0x48, 0x83, 0xB9,
+			0x98, 0x00, 0x00, 0x00, 0x00 };
+		for (int i = 0; i < 15; i++) {
+			if (pHookData->oldEntry[i] != Code[i]) {
+				break;
+			}
+		}
+		bResult = TRUE;
+	}
 	
 	return bResult;
 }
@@ -266,7 +323,7 @@ BOOL InstallCodeHook(PHOOK_DATA pHookData)
 		if (CheckEntry(pHookData)) {
 			if (WriteProcessMemory(hProcess, OriginalAddr, pHookData->newEntry, pHookData->HookCodeLen, &dwBytesReturned))
 			{
-				m_pDataLog->LogString("成功HOOK！");
+				m_pDataLog->LogString("成功HOOK！\n");
 				bResult = TRUE;
 			}
 			else {
