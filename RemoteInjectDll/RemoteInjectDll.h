@@ -6,3 +6,7 @@
 //#endif
 
 //extern "C"  _declspec(dllexport) void test();
+
+
+
+VOID HOOK();
