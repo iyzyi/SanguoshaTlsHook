@@ -90,11 +90,13 @@ int WINAPI My_Recv(QWORD *ssl, void *buf, int num)
 	//}
 	//return ret;
 
-	m_pDataLog->LogString("Recv Data:\n");
-	m_pDataLog->LogHexData((PCHAR)m_pDataLog->bBuffer, (PBYTE)buf, num);
-	m_pDataLog->LogString("\n\n");
-
-	return OriginalSend(ssl, buf, num);
+	int ret = OriginalRecv(ssl, buf, num);
+	if (ret > 0) {
+		m_pDataLog->LogFormatString(64, "Recv Data (%d Bytes): \n", ret);
+		m_pDataLog->LogHexData("", (PBYTE)buf, ret);
+		m_pDataLog->LogString("\n\n");
+	}
+	return ret;
 }
 
 int WINAPI My_Send(QWORD *ssl, const void *buf, int num)
@@ -108,10 +110,8 @@ int WINAPI My_Send(QWORD *ssl, const void *buf, int num)
 	return ret;*/
 	//MessageBoxA(NULL, "send", "", NULL);
 
-	
-	//m_pDataLog->LogString("call My_Send\n");
-	m_pDataLog->LogString("Send Data:\n");
-	m_pDataLog->LogHexData((PCHAR)m_pDataLog->bBuffer, (PBYTE)buf, num);
+	m_pDataLog->LogFormatString(64, "Send Data (%d Bytes): \n", num);
+	m_pDataLog->LogHexData("", (PBYTE)buf, num);
 	m_pDataLog->LogString("\n\n");
 
 	return OriginalSend(ssl, buf, num);
@@ -127,13 +127,12 @@ BOOL Inline_InstallHook_Recv()
 																									  //MsgBoxHookData.pfnOriginalFun = (PVOID)OriginalMessageBox;//调用原始函数的通道
 																									  //x64下不能内联汇编了，所以申请一块内存用做TrampolineFun的shellcode
 
-	sprintf((PCHAR)m_pDataLog->bBuffer, "SSL_read HookPoint = 0x%llx\n", SendHookData.HookPoint);
-	m_pDataLog->LogString((PCHAR)m_pDataLog->bBuffer);
+	m_pDataLog->LogFormatString(64, "SSL_read HookPoint = 0x%llx\n", RecvHookData.HookPoint);
 
 	RecvHookData.pfnTrampolineFun = (ULONG_PTR)VirtualAlloc(NULL, 128, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
-	RecvHookData.pfnDetourFun = (ULONG_PTR)My_Recv;//自定义hook函数
+	RecvHookData.pfnDetourFun = (ULONG_PTR)My_Recv;														//自定义hook函数
 	BOOL result = InstallCodeHook(&RecvHookData);
-	OriginalRecv = (PFN_Recv)RecvHookData.pfnTrampolineFun;			//相当于HOOK前的recv函数
+	OriginalRecv = (PFN_Recv)RecvHookData.pfnTrampolineFun;												//相当于HOOK前的recv函数
 	
 	m_pDataLog->LogString("\n\n");
 	return result;
@@ -145,15 +144,14 @@ BOOL Inline_InstallHook_Send()
 	strcpy_s(SendHookData.szApiName, "SSL_write");
 	strcpy_s(SendHookData.szModuleName, "SGSOL.exe");
 	SendHookData.HookCodeLen = 13;
-	SendHookData.HookPoint = (ULONG_PTR)GetAddress(SendHookData.szModuleName, SendHookData.szApiName);//HOOK的地址
+	SendHookData.HookPoint = (ULONG_PTR)GetAddress(SendHookData.szModuleName, SendHookData.szApiName);	//HOOK的地址
 
-	sprintf((PCHAR)m_pDataLog->bBuffer, "SSL_write HookPoint = 0x%llx\n", SendHookData.HookPoint);
-	m_pDataLog->LogString((PCHAR)m_pDataLog->bBuffer);
+	m_pDataLog->LogFormatString(64, "SSL_write HookPoint = 0x%llx\n", SendHookData.HookPoint);
 
 	SendHookData.pfnTrampolineFun = (ULONG_PTR)VirtualAlloc(NULL, 128, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
-	SendHookData.pfnDetourFun = (ULONG_PTR)My_Send;//自定义hook函数
+	SendHookData.pfnDetourFun = (ULONG_PTR)My_Send;														//自定义hook函数
 	BOOL result = InstallCodeHook(&SendHookData);
-	OriginalSend = (PFN_Send)SendHookData.pfnTrampolineFun;			//相当于HOOK前的send函数
+	OriginalSend = (PFN_Send)SendHookData.pfnTrampolineFun;												//相当于HOOK前的send函数
 
 	m_pDataLog->LogString("\n\n");
 	return result;
@@ -164,8 +162,7 @@ LPVOID GetAddress(char* szModuleName, char *szFuncName)
 {
 	DWORD dwOffset = 0;
 
-	m_pDataLog->LogString(szFuncName);
-	m_pDataLog->LogString("\n");
+	m_pDataLog->LogFormatString(64, "%s\n", szFuncName);
 
 	if (strcmp(szFuncName, "SSL_write") == 0) {
 		dwOffset = 0x14268EAD0 - 0x140000000;
@@ -177,13 +174,8 @@ LPVOID GetAddress(char* szModuleName, char *szFuncName)
 	HMODULE hModule = 0;
 	if (hModule = GetModuleHandleA(szModuleName))
 	{
-		sprintf((PCHAR)m_pDataLog->bBuffer, "%s BaseAddr = 0x%llx\n", szFuncName, (QWORD)hModule);
-		m_pDataLog->LogString((PCHAR)m_pDataLog->bBuffer);
-
-		sprintf((PCHAR)m_pDataLog->bBuffer, "%s Offset = 0x%llx\n", szFuncName, (QWORD)dwOffset);
-		m_pDataLog->LogString((PCHAR)m_pDataLog->bBuffer);
-		//MessageBoxA(NULL, (PCHAR)m_pDataLog->bBuffer, "", 0);
-
+		m_pDataLog->LogFormatString(64, "%s BaseAddr = 0x%llx\n", szFuncName, (QWORD)hModule);
+		m_pDataLog->LogFormatString(64, "%s Offset = 0x%llx\n", szFuncName, (QWORD)dwOffset);
 		return (LPVOID)((QWORD)hModule + (QWORD)dwOffset);
 	}
 	else
@@ -270,9 +262,8 @@ BOOL CheckEntry(PHOOK_DATA pHookData) {
 	BOOL bResult = FALSE;
 
 	if (strcmp(pHookData->szApiName, "SSL_write") == 0) {
-		m_pDataLog->LogString("原入口点指令：\n");
-		m_pDataLog->LogHexData((PCHAR)m_pDataLog->bBuffer, pHookData->oldEntry, 13);
-		m_pDataLog->LogString("原入口点指令：test\n");
+		m_pDataLog->LogHexData("原入口点指令：\n", pHookData->oldEntry, 13);
+
 		BYTE Code[13] = { 0x41, 0x56, 0x56, 0x57, 0x55, 0x53, 0x48, 0x83, 0xEC, 0x40,
 			0x44, 0x89, 0xC6 };
 		for (int i = 0; i < 13; i++) {
@@ -284,8 +275,7 @@ BOOL CheckEntry(PHOOK_DATA pHookData) {
 	}
 
 	if (strcmp(pHookData->szApiName, "SSL_read") == 0) {
-		m_pDataLog->LogString("原入口点指令：\n");
-		m_pDataLog->LogHexData((PCHAR)m_pDataLog->bBuffer, pHookData->oldEntry, 15);
+		m_pDataLog->LogHexData("原入口点指令：\n", pHookData->oldEntry, 15);
 
 		BYTE Code[15] = { 0x56, 0x57, 0x53, 0x48, 0x83, 0xEC, 0x30, 0x48, 0x83, 0xB9,
 			0x98, 0x00, 0x00, 0x00, 0x00 };
